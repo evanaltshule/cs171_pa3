@@ -20,12 +20,14 @@ def handle_input(listen_for_servers, server_pids, client_pids):
             inp = input()
             if inp == 'exit':
                 do_exit(listen_for_servers)
+            #connect to all servers
             if inp == 'connect':
                 for pid, port in server_pids.items():
                     if int(OUR_PID) != int(pid):
                         (threading.Thread(target=server_connect, args=(int(pid),port))).start()
                 # for pid, port in client_pids.items():
                 #     (threading.Thread(target=client_connect, args=(int(pid),port))).start()
+            #Broadcast message to all servers
             if inp[0:4] == 'send':
                 sentence = inp[6:len(inp) - 1]
                 for s_pid, conn in OTHER_SERVERS.items():
@@ -94,7 +96,9 @@ if __name__ == "__main__":
     listen_for_servers.bind((socket.gethostname(), int(PORT)))
     listen_for_servers.listen(32)
     print(f'Server listening on port {PORT}.')
+    #Holds server id and connection to that server
     OTHER_SERVERS = {}
+    #Holds client id and connection to that client
     CLIENTS = {}
     # output_file = open(sys.argv[1], 'w')
 
