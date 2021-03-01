@@ -35,11 +35,13 @@ def find_nonce(operation):
 #Fill blockchain with two dummy blocks
 def make_test_blockchain():
     global BLOCKCHAIN
+    #make block 1
     header = ["cDerLTddRjJ", 12324323243]
     operation = ["put","alice_netid"]
     value = {"phone_number": "111-222-3333"}
     operation.append(value)
     block1 = make_block(header, operation)
+    #make block 2
     BLOCKCHAIN.append(block1)
     header = ["bRdDoKBqaZ", 8765432]
     operation = ["get","alice_netid"]
@@ -48,16 +50,18 @@ def make_test_blockchain():
     block2 = make_block(header, operation)
     BLOCKCHAIN.append(block2)
 
-def write_to_disk(filename='blockchain.txt'): 
-    global  BLOCKCHAIN
+#Write current blockchain to disk
+def write_to_disk(): 
+    global BLOCKCHAIN
     for block in BLOCKCHAIN:
         append_block(block)
-
+#helper function to append block to file
 def append_block(block):
     with open('blockchain.txt', 'a') as f:
         json.dump(block, f)
         f.write(os.linesep)
 
+#Read blockchain from file and update global state
 def read_from_disk():
     global BLOCKCHAIN
     try:
@@ -66,6 +70,7 @@ def read_from_disk():
     except FileNotFoundError:
         print("File being read does not exist")
 
+#print blocks on blockchain
 def print_blockchain():
     global BLOCKCHAIN
     for block_num in range(len(BLOCKCHAIN)):
@@ -77,11 +82,15 @@ def print_blockchain():
 while(True):
     inp = input()
     if inp == "write":
+        print("Writing two dummy blocks to blockchain.txt")
         make_test_blockchain()
         write_to_disk()
     if inp == "read":
         read_from_disk()
+    if inp == "print":
         print_blockchain()
+    if inp == "exit":
+        os._exit(0)
 
 
 

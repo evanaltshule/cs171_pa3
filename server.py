@@ -5,7 +5,14 @@ import sys
 import os
 import json
 import hashlib
+import collections
 
+"""
+Queue data structure: dequeue
+--Able to append and remove from both sides
+
+key/value data structure: normal python dictionary
+"""
 
 def do_exit(server_socket):
     sys.stdout.flush()
