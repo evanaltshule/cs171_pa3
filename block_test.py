@@ -10,6 +10,8 @@ Dictionary
     "header": [nonce, prev_hash]
     "operation": [op,key,value] //value is empty dict if put operation
 }
+Need to add a bool value to show if the block is tentative or permanent
+Include depth in header?
 """
 
 BLOCKCHAIN = []
@@ -79,6 +81,7 @@ def print_blockchain():
 
 
 #MAIN
+print("Type 'write', 'read', 'print', or 'exit': ")
 while(True):
     inp = input()
     if inp == "write":
@@ -86,6 +89,7 @@ while(True):
         make_test_blockchain()
         write_to_disk()
     if inp == "read":
+        print("Reading blockchain and creating a copy")
         read_from_disk()
     if inp == "print":
         print_blockchain()

@@ -8,11 +8,15 @@ import hashlib
 import collections
 
 """
-Queue data structure: dequeue
+Queue data structure: deque
 --Able to append and remove from both sides
 
 key/value data structure: normal python dictionary
 """
+
+#QUEUE = collections.deque()
+#STUDENTS = dict()
+
 
 def do_exit(server_socket):
     sys.stdout.flush()
@@ -104,6 +108,7 @@ if __name__ == "__main__":
     listen_for_servers.listen(32)
     print(f'Server listening on port {PORT}.')
     #Holds server id and connection to that server
+    #Will map sever id to list with port and whether it is an active connection or not
     OTHER_SERVERS = {}
     #Holds client id and connection to that client
     CLIENTS = {}

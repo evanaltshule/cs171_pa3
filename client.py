@@ -7,6 +7,8 @@ import threading
 import json
 import os
 
+CURRENT_LEADER = None
+
 def do_exit(server_sock):
     server_sock.close()
     os._exit(0)
