@@ -6,6 +6,7 @@ import os
 import json
 import hashlib
 import collections
+import pickle
 
 """
 Queue data structure: deque
@@ -17,6 +18,17 @@ key/value data structure: normal python dictionary
 #QUEUE = collections.deque()
 #STUDENTS = dict()
 
+#Paxos globals
+SEQ_NUM = 0
+PROC_ID = 0
+DEPTH = 0
+#make function that returns depth (length) of blockchain
+#leader = server_id
+#accept_count = 0
+
+#Blockchain variables
+#BLOCKCHAIN = []
+
 
 def do_exit(server_socket):
     sys.stdout.flush()
@@ -26,6 +38,7 @@ def do_exit(server_socket):
 
 def handle_input(listen_for_servers, server_pids, client_pids):
     global OUR_PID
+    global OTHER_SERVERS
     while True:
         try:
             inp = input()
@@ -39,6 +52,8 @@ def handle_input(listen_for_servers, server_pids, client_pids):
                 # for pid, port in client_pids.items():
                 #     (threading.Thread(target=client_connect, args=(int(pid),port))).start()
             #Broadcast message to all servers
+            if inp == 'leader':
+                threading.Thread(target = leader_request, args = (server_pids,)).start()
             if inp[0:4] == 'send':
                 sentence = inp[6:len(inp) - 1]
                 for s_pid, conn in OTHER_SERVERS.items():
@@ -56,6 +71,24 @@ def server_connect(server_pid,port):
     server_to_server.sendall(b"server")
     OTHER_SERVERS[server_pid] = server_to_server
     print(f"Connected to Server{server_pid}")
+
+def leader_request(server_pids):
+    global OUR_PID
+    global OTHER_SERVERS
+    ballot = get_ballot_num()
+    message = {}
+    message["type"] = "prepare"
+    message["ballot"] = get_ballot_num()
+    encoded_message = pickle.dumps(message).encode('utf-8')
+    for s_pid, conn in OTHER_SERVERS.items():
+        printf("Sending prepare from server {OUR_PID} to server {s_pid}")
+        conn.sendall(encoded_message)
+
+def get_ballot_num():
+    global SEQ_NUM
+    global PROC_ID
+    global DEPTH
+    return (SEQ_NUM, PROC_ID, DEPTH)
 
 # def client_connect(client_pid,port):
 #     global CLIENTS
@@ -81,8 +114,9 @@ def handle_server(stream):
         data = stream.recv(1024)
         if not data:
             break
-        message = data.decode('utf-8')
-        print(f"Received message from server {message}")
+        message = pickle.loads(data.decode('utf-8'))
+        print(f"Received message") #from server {message}")
+        print(message)
 
 def handle_client(stream):
     while(True):
@@ -90,6 +124,7 @@ def handle_client(stream):
         if not data:
             break
         message = data.decode('utf-8')
+
         print(f"Received message from client {message}")
 
 

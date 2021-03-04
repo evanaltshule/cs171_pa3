@@ -33,7 +33,7 @@ def server_listen(sock):
 
 
 if __name__ == "__main__":
-    pid = int(sys.argv[1]) 
+    pid = int(sys.argv[1])
     PORT = sys.argv[2]
 
     server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
