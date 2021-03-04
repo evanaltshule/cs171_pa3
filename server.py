@@ -22,6 +22,7 @@ key/value data structure: normal python dictionary
 SEQ_NUM = 0
 PROC_ID = 0
 DEPTH = 0
+NUM_PROMISES = 0
 #make function that returns depth (length) of blockchain
 #leader = server_id
 #accept_count = 0
@@ -79,9 +80,10 @@ def leader_request(server_pids):
     message = {}
     message["type"] = "prepare"
     message["ballot"] = get_ballot_num()
-    encoded_message = pickle.dumps(message).encode('utf-8')
+    message["sender_pid"] = OUR_PID
+    encoded_message = pickle.dumps(message)
     for s_pid, conn in OTHER_SERVERS.items():
-        printf("Sending prepare from server {OUR_PID} to server {s_pid}")
+        print(f"Sending prepare from server {OUR_PID} to server {s_pid}")
         conn.sendall(encoded_message)
 
 def get_ballot_num():
@@ -114,9 +116,24 @@ def handle_server(stream):
         data = stream.recv(1024)
         if not data:
             break
-        message = pickle.loads(data.decode('utf-8'))
-        print(f"Received message") #from server {message}")
-        print(message)
+        message = pickle.loads(data)
+        #Handle prepare message
+        if message["type"] == "prepare":
+            print(f"Received prepare message from server {message["sender_pid"]}")
+            threading.Thread(target=handle_prepare, args = (message,))
+        #Handle promise message
+        elif message["type"] == "promise":
+
+
+
+def handle_prepare(message):
+    global OTHER_SERVERS
+    conn = OTHER_SERVERS[message["sender_pid"]]
+    reply = {}
+    reply["type"] = "promise"
+    reply_encoded = pickle.dumps(reply)
+    conn.sendall(reply)
+
 
 def handle_client(stream):
     while(True):
