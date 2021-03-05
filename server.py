@@ -19,10 +19,11 @@ key/value data structure: normal python dictionary
 #STUDENTS = dict()
 
 LOCK = threading.Lock()
-
+MY_QUORUM = {}
 #Paxos globals
 LEADER = None
 CURR_BAL_NUM = (0,0,0)
+NACKED = False
 #For ballot num
 SEQ_NUM = 0
 MY_PID = 0
@@ -51,6 +52,7 @@ def do_exit(server_socket):
 def handle_input(listen_for_servers, server_pids, client_pids):
     global MY_PID
     global OTHER_SERVERS
+
     while True:
         try:
             inp = input()
@@ -58,32 +60,38 @@ def handle_input(listen_for_servers, server_pids, client_pids):
                 do_exit(listen_for_servers)
             #connect to all servers
             if inp == 'connect':
-                for pid, port in server_pids.items():
+                quorum = server_pids[str(MY_PID)]["quorum"]
+                for pid, info in server_pids.items():
                     if MY_PID != int(pid):
-                        (threading.Thread(target=server_connect, args=(int(pid),port))).start()
+                        port = info["port"]
+                        (threading.Thread(target=server_connect, args=(int(pid),port,quorum))).start()
                 # for pid, port in client_pids.items():
                 #     (threading.Thread(target=client_connect, args=(int(pid),port))).start()
             #Broadcast message to all servers
-            if inp == 'leader':
-                threading.Thread(target = leader_request, args = (server_pids,)).start()
+            #if inp == 'leader':
+            #    threading.Thread(target = leader_request, args = ()).start()
         except EOFError:
             pass
 
 
-def server_connect(server_pid,port):
+def server_connect(server_pid,port,quorum):
     global OTHER_SERVERS
+    global MY_QUORUM
     server_to_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_to_server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_to_server.connect((socket.gethostname(),port))
     server_to_server.sendall(b"server")
     OTHER_SERVERS[server_pid] = server_to_server
+    if (server_pid in quorum):
+        MY_QUORUM[server_pid] = server_to_server
     print(f"Connected to Server{server_pid}")
 
-def leader_request(server_pids):
+def leader_request():
     global MY_PID
     global OTHER_SERVERS
     global NUM_PROMISES
     global CURR_BAL_NUM
+    global NACKED
 
     increment_seq_num()
     ballot = get_ballot_num()
@@ -94,13 +102,28 @@ def leader_request(server_pids):
     message["sender_pid"] = MY_PID
     encoded_message = pickle.dumps(message)
     time.sleep(4)
-    for s_pid, conn in OTHER_SERVERS.items():
+    for s_pid, conn in MY_QUORUM.items():
         print(f"Sending prepare from server {MY_PID} to server {s_pid}")
         conn.sendall(encoded_message)
     while(ENOUGH_PROMISES != True):
+        #CHECK IF YOU GET A NACK, try again after some time 
+        if(NACKED == True):
+            #retry prepare: set promises to zero, set NACKED to False, sleep 5 seconds, call leader_request
+            print("I got nacked")
+            threading.Thread(target = retry_prepare, args=())
+            break
         pass
-    leader_broadcast()
+    if(NACKED == False):
+        leader_broadcast()
 
+def retry_prepare():
+    global NUM_PROMISES
+    global NACKED
+
+    NUM_PROMISES = 0
+    time.sleep(5)
+    NACKED = False
+    leader_request()
 
 def increment_seq_num():
     global SEQ_NUM
@@ -114,30 +137,12 @@ def get_ballot_num():
     global DEPTH
     return (SEQ_NUM, MY_PID, DEPTH)
 
-# def client_connect(client_pid,port):
-#     global CLIENTS
-#     server_to_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-#     server_to_client.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-#     server_to_client.connect((socket.gethostname(),port))
-#     CLIENTS[client_pid] = server_to_client
-#     print(f"Connected to Client{client_pid}")
-
-
-# def server_listen(pid, data, server_sock):
-#     print(f'Client {pid} listening on port {PORT}.')
-#     while True:
-#         sock, address = client_socket.accept()
-#         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-#         print(f'Client {pid} listen_for_serversected to {address}')
-#         #start new thread to handle_event ?
-#         threading.Thread(target=handle_event, args=(sock, address, pid, server_sock)).start()
-#     client_socket.close()
-
 def handle_server(stream):
     global NUM_PROMISES
     global LEADER
     global MY_PID
     global ENOUGH_PROMISES
+    global NACKED
 
     while(True):
         data = stream.recv(1024)
@@ -160,6 +165,8 @@ def handle_server(stream):
         elif message["type"] == "leader_broadcast":
             LEADER = message["leader"]
             print(f"Assigned leader to {LEADER}")
+        elif message["type"] == "nack":
+            NACKED = True
 
 
 
@@ -168,6 +175,7 @@ def handle_prepare(message):
     global DEPTH
     global ACCEPTED_NUM
     global ACCEPTED_PID
+    global CURR_BAL_NUM
 
     sender_pid = int(message["sender_pid"])
     conn = OTHER_SERVERS[sender_pid]
@@ -176,7 +184,7 @@ def handle_prepare(message):
     proposer_ballot = message["ballot"]
     print(f"proposer ballot: {proposer_ballot}")
     #compare depth, seq_num, andpid of proposer to currently held values
-    if(proposer_ballot[2] < DEPTH or proposer_ballot[0] < ACCEPTED_NUM  or (proposer_ballot[0] == ACCEPTED_NUM and proposer_ballot[1] < ACCEPTED_PID)):
+    if(proposer_ballot[2] < DEPTH or proposer_ballot[0] < CURR_BAL_NUM[0]  or (proposer_ballot[0] == CURR_BAL_NUM[0] and proposer_ballot[1] < CURR_BAL_NUM[1])):
         print(f"Proposal no good")
         reply["type"] = "nack"
         reply["ballot"] = proposer_ballot
@@ -194,7 +202,8 @@ def handle_prepare(message):
 
 def leader_broadcast():
     global MY_PID 
-
+    global CLIENTS
+    
     message = {}
     message["type"] = "leader_broadcast"
     message["leader"] = MY_PID
@@ -204,15 +213,19 @@ def leader_broadcast():
     time.sleep(4)
     for s_pid, conn in OTHER_SERVERS.items():
         conn.sendall(encoded_message)
+    client_stream = CLIENTS[1]
+    client_stream.sendall(encoded_message)
+    NUM_PROMISES = 0
 
 def handle_client(stream):
     while(True):
         data = stream.recv(1024)
         if not data:
             break
-        message = data.decode('utf-8')
+        message = pickle.loads(data)
+        if message["type"] == "leader_request":
+            threading.Thread(target = leader_request, args = ()).start()
 
-        print(f"Received message from client {message}")
 
 
 
@@ -260,6 +273,8 @@ if __name__ == "__main__":
             if message == "server":
                 threading.Thread(target=handle_server, args=(stream,)).start()
             elif message == "client":
+                print("Connected to client")
+                CLIENTS[1] = stream
                 threading.Thread(target=handle_client, args=(stream,)).start()
         except KeyboardInterrupt:
             do_exit(output_file, listen_for_servers)
