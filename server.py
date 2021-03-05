@@ -15,8 +15,8 @@ Queue data structure: deque
 key/value data structure: normal python dictionary
 """
 
-#QUEUE = collections.deque()
-#STUDENTS = dict()
+QUEUE = collections.deque()
+STUDENTS = dict()
 
 LOCK = threading.Lock()
 MY_QUORUM = {}
@@ -203,7 +203,7 @@ def handle_prepare(message):
 def leader_broadcast():
     global MY_PID 
     global CLIENTS
-    
+
     message = {}
     message["type"] = "leader_broadcast"
     message["leader"] = MY_PID
