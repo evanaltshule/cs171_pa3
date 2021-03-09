@@ -31,10 +31,14 @@ DEPTH = 0
 #For acceptor phase
 NUM_PROMISES = 0
 ENOUGH_PROMISES = False
+PROMISED_VALS =[]
 #For promise phase
 ACCEPTED_NUM = 0
 ACCEPTED_VAL = None
 ACCEPTED_PID = 0
+#For accept phase
+NUM_ACCEPTED = 0
+ENOUGH_ACCEPTED = False
 
 
 ACCEPT_COUNT = 0
@@ -86,6 +90,37 @@ def server_connect(server_pid,port,quorum):
         MY_QUORUM[server_pid] = server_to_server
     print(f"Connected to Server{server_pid}")
 
+def leader_accept():
+    global MY_PID
+    global LEADER
+    global QUEUE
+    global ENOUGH_ACCEPTED
+
+    while(LEADER != MY_PID or QUEUE[0] == None):
+        pass
+
+    message = {}
+    message["type"] = "accept"
+    message["ballot"] = CURR_BAL_NUM
+    #make block by finding nonce
+    #find_nonce()
+    message["value"] = QUEUE[0]
+    encoded_message = pickle.dumps(message)
+    for s_pid, conn in OTHER_SERVERS.items():
+        print(f"Sending accept request from server {MY_PID} to server {s_pid}")
+        conn.sendall(encoded_message)
+
+    while(ENOUGH_ACCEPTED != True):
+        pass
+
+    decide(QUEUE[0])
+
+def decide(block):
+    #Add block to blockchain
+    pass
+    #Notify servers and clients about the block
+
+
 def leader_request():
     global MY_PID
     global OTHER_SERVERS
@@ -110,11 +145,30 @@ def leader_request():
         if(NACKED == True):
             #retry prepare: set promises to zero, set NACKED to False, sleep 5 seconds, call leader_request
             print("I got nacked")
-            threading.Thread(target = retry_prepare, args=())
+            threading.Thread(target = retry_prepare, args=()).start()
             break
         pass
     if(NACKED == False):
         leader_broadcast()
+
+def leader_broadcast():
+    global MY_PID 
+    global CLIENTS
+    global LEADER
+
+    message = {}
+    message["type"] = "leader_broadcast"
+    message["leader"] = MY_PID
+    encoded_message = pickle.dumps(message)
+    increment_seq_num()
+    print(f"I am the leader!")
+    time.sleep(4)
+    for s_pid, conn in OTHER_SERVERS.items():
+        conn.sendall(encoded_message)
+    client_stream = CLIENTS[1]
+    client_stream.sendall(encoded_message)
+    LEADER = MY_PID
+    NUM_PROMISES = 0
 
 def retry_prepare():
     global NUM_PROMISES
@@ -159,7 +213,17 @@ def handle_server(stream):
         elif message["type"] == "promise":
             LOCK.acquire()
             NUM_PROMISES += 1
+            PROMISED_VALS.append(message["promise_values"])
             if NUM_PROMISES >=2:
+                #Check to see if accepted vals sent are null
+                highest_accepted_num = 0
+                new_val = None
+                for prom_val in PROMISED_VALS:
+                    if prom_val["accepted_val"]:
+                        if prom_val["accepted_num"] > highest_accepted_num:
+                            new_val = prom_val["accepted_val"]
+                if new_val:
+                    QUEUE.appendleft(new_val)
                 ENOUGH_PROMISES = True
             LOCK.release()
         elif message["type"] == "leader_broadcast":
@@ -200,22 +264,6 @@ def handle_prepare(message):
         print(f"Sending promise back to leader")
         conn.sendall(reply_encoded)
 
-def leader_broadcast():
-    global MY_PID 
-    global CLIENTS
-
-    message = {}
-    message["type"] = "leader_broadcast"
-    message["leader"] = MY_PID
-    encoded_message = pickle.dumps(message)
-    increment_seq_num()
-    print(f"I am the leader!")
-    time.sleep(4)
-    for s_pid, conn in OTHER_SERVERS.items():
-        conn.sendall(encoded_message)
-    client_stream = CLIENTS[1]
-    client_stream.sendall(encoded_message)
-    NUM_PROMISES = 0
 
 def handle_client(stream):
     while(True):
@@ -225,7 +273,10 @@ def handle_client(stream):
         message = pickle.loads(data)
         if message["type"] == "leader_request":
             threading.Thread(target = leader_request, args = ()).start()
-
+        elif message["type"] == "put" or message["type"] == "get":
+            LOCK.acquire()
+            QUEUE.append(message)
+            LOCK.release()
 
 
 
@@ -248,7 +299,6 @@ if __name__ == "__main__":
     #Holds client id and connection to that client
     CLIENTS = {}
     # output_file = open(sys.argv[1], 'w')
-
     #Load server json file with port nums
     with open('server_config.json') as conf:
         server_pids = json.load(conf)
@@ -259,9 +309,10 @@ if __name__ == "__main__":
 
     #Start to listen for other servers trying to listen_for_serversect
     #threading.Thread(target=server_listen, args=(pid, data, server_sock)).start()
-
     threading.Thread(target=handle_input, args=(
         listen_for_servers, server_pids, client_pids)).start()
+
+    threading.Thread(target = leader_accept).start()
 
     while True:
         try:

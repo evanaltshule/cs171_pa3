@@ -7,8 +7,11 @@ import threading
 import json
 import os
 import pickle
+import collections
 
 CURRENT_LEADER = None
+WAITING = False
+OP_DEQ = collections.deque()
 
 # def do_exit():
 #     server_sock.close()
@@ -27,7 +30,12 @@ def handle_input(client_pid, server_info):
             if inp[0:6] == "leader":
                 print("inputted leader")
                 leader_id = int(inp[7])
-                threading.Thread(target= init_leader, args = (leader_id,)).start()
+                threading.Thread(target = init_leader, args = (leader_id,)).start()
+            if inp[0:3] == "put":
+                threading.Thread(target = send_put, args = (inp,)).start()
+            if inp[0:3] == "get":
+                threading.Thread(target = send_get, args = (inp,)).start()
+
         except EOFError:
             pass
 
@@ -51,13 +59,74 @@ def server_connect(server_pid,port):
     print(f"Connected to server {server_pid}")
     (threading.Thread(target=server_listen, args=(server_sock,))).start()
 
+def send_put(inp):
+    global OP_DEQ
+
+    op = inp.split()
+    message = {}
+    message["type"] = "put"
+    message["id"] = op[1]
+    message["phone"] = op[2]
+
+    OP_DEQ.append(message)
+
+    while(OP_DEQ[0] != message):
+        pass
+    encoded_message = pickle.dumps(message)
+    print(f"Sending put operation to server {CURRENT_LEADER}")
+    conn = SERVERS[CURRENT_LEADER]
+    conn.sendall(encoded_message)
+    WAITING = True
+    # time = datetime.now()
+    #Wait to hear back for server
+    while(WAITING == True):
+        # if(datetime.now() - time > TIMEOUT):
+        #     new_leader()
+        pass
+    OP_DEQ.popleft()
+
+def send_get(inp):
+    global OP_DEQ
+
+    op = inp.split()
+    message = {}
+    message["type"] = "get"
+    message["id"] = op[1]
+    message["value"] = None
+
+    OP_DEQ.append(message)
+
+    while(OP_DEQ[0] != message):
+        pass
+    encoded_message = pickle.dumps(message)
+    print(f"Sending get operation to server {CURRENT_LEADER}")
+    conn = SERVERS[CURRENT_LEADER]
+    conn.sendall(encoded_message)
+    WAITING = True
+    # time = datetime.now()
+    #Wait to hear back for server
+    while(WAITING == True):
+        # if(datetime.now() - time > TIMEOUT):
+        #     new_leader()
+        pass
+    OP_DEQ.popleft()
+
+
+
 def server_listen(sock):
+    global CURRENT_LEADER
     data = (sock.recv(1024))
     message = pickle.loads(data)
     if message["type"] == "leader_broadcast":
         CURRENT_LEADER = message["leader"]
         print(f"Server {CURRENT_LEADER} elected leader")
-
+    if message["type"] == "put_ack":
+        print(f"Got acknowledgment from server {CURRENT_LEADER}") 
+        WAITING = False
+    if message["type"] == "get_ack":
+        value = message["value"]
+        print(f"Got get acknowledgment from server {CURRENT_LEADER} for value {value}")
+        WAITING = False
 
 if __name__ == "__main__":
     pid = int(sys.argv[1])
@@ -69,4 +138,3 @@ if __name__ == "__main__":
     handle_input(pid, server_info)
 
     #Change for client later
-
