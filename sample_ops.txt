@@ -1,0 +1,4 @@
+put alice_netid phone_number:111-222-3333
+put bob_netid phone_number:444-555-666
+get alice_netid
+get bob_netid
