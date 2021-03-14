@@ -53,6 +53,8 @@ ACCEPT_COUNT = 0
 #Blockchain variables
 BLOCKCHAIN = []
 
+FAILED_LINKS = {}
+
 
 def do_exit(server_socket):
     global OTHER_SERVERS
@@ -94,6 +96,14 @@ def handle_input(listen_for_servers, server_pids):
                 threading.Thread(target=print_kv).start()
             elif inp[0] == "printqueue":
                 threading.Thread(target=print_queue).start()
+            elif inp[0] == "faillink":
+                src = int(inp[1])
+                dest = int(inp[2])
+                threading.Thread(target=fail_link, args=(src, dest)).start()
+            elif inp[0] == "fixlink":
+                src = int(inp[1])
+                dest = int(inp[2])
+                threading.Thread(target=fix_link, args=(src, dest)).start()
 
         except EOFError:
             pass
@@ -124,6 +134,49 @@ def server_connect(server_pid,port,quorum):
     if (server_pid in quorum):
         MY_QUORUM[server_pid] = server_to_server
     print(f"Connected to Server{server_pid}")
+
+def fail_link(src, dest):
+    global OTHER_SERVERS
+    global MY_QUORUM
+    global MY_PID
+    global FAILED_LINKS
+
+    conn = OTHER_SERVERS[dest]
+    message = {}
+    message["type"] = "faillink"
+    message["sender"] = MY_PID
+    encoded_message = pickle.dumps(message)
+    time.sleep(5)
+    conn.sendall(encoded_message)
+
+    FAILED_LINKS[dest] = conn
+    del OTHER_SERVERS[dest]
+
+    print(f"Link failed with server {sender}")
+
+    if MY_QUORUM.get(dest, -1) != -1:
+        del MY_QUORUM[dest]
+        for pid, conn in OTHER_SERVERS.items():
+            if pid != dest and MY_QUORUM.get(pid, -1) == -1:
+                print(f"Added server {pid} to my quorum")
+                MY_QUORUM[pid] = conn
+                break
+
+def fix_link(src, dest):
+    global OTHER_SERVERS
+    global FAILED_LINKS
+
+    conn = FAILED_LINKS[dest]
+    OTHER_SERVERS[dest] = conn
+    del FAILED_LINKS[dest]
+    message = {}
+    message["type"] = "fixlink"
+    message["sender"] = MY_PID
+    encoded_message = pickle.dumps(message)
+    time.sleep(5)
+    conn.sendall(encoded_message)
+
+    print(f"Link fixed with server {sender}")
 
 def generate_nonce():
     nonce = ''.join(random.choice(string.ascii_letters) for i in range(10))
@@ -360,7 +413,14 @@ def handle_server(stream):
             key = block["operation"]["key"]
             value = block["operation"]["value"] 
             STUDENTS[key] = value
-
+        elif message["type"] == "faillink":
+            sender = message["sender"]
+            print(f"Received faillink from {sender}")
+            threading.Thread(target=handle_fail_link, args=(sender)).start()
+        elif message["type"] == "fixlink":
+            sender = message["sender"]
+            print(f"Received fixlink from {sender}")
+            threading.Thread(target=handle_fix_link, args=(sender)).start()
 
 
 def handle_prepare(message):
@@ -431,6 +491,34 @@ def handle_accept(message):
         increment_seq_num()
         conn.sendall(reply_encoded)
 
+def handle_fail_link(sender):
+    global FAILED_LINKS
+    global OTHER_SERVERS
+    global MY_QUORUM
+
+    conn = OTHER_SERVERS[sender]
+    FAILED_LINKS[sender] = conn
+    del OTHER_SERVERS[sender]
+
+    print(f"Link failed with server {sender}")
+
+    if MY_QUORUM.get(sender, -1) != -1:
+        del MY_QUORUM[sender]
+        for pid, conn in OTHER_SERVERS.items():
+            if pid != sender and MY_QUORUM.get(pid, -1) == -1:
+                print(f"Added server {pid} to my quorum")
+                MY_QUORUM[pid] = conn
+                break
+
+def handle_fix_link(sender):
+    global FAILED_LINKS
+    global OTHER_SERVERS
+
+    conn = FAILED_LINKS[sender]
+    OTHER_SERVERS[sender] = conn
+    del FAILED_LINKS[sender]
+
+    print(f"Link fixed with server {sender}")
 
 def handle_client(stream):
     while(True):
