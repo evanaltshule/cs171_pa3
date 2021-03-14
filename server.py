@@ -18,6 +18,10 @@ Queue data structure: deque
 key/value data structure: normal python dictionary
 """
 
+#TO-DOs
+#1. Implement server disconnects
+#2. fix blockchains if depths are uneven
+
 QUEUE = collections.deque()
 STUDENTS = dict()
 
@@ -51,22 +55,29 @@ BLOCKCHAIN = []
 
 
 def do_exit(server_socket):
+    global OTHER_SERVERS
+    global CLIENTS
     sys.stdout.flush()
-    server_socket.close()
+    for sid, sock in OTHER_SERVERS.items():
+        sock.close()
+
+    for cid, sock in CLIENTS.items():
+        sock.close()
     os._exit(0)
 
 
-def handle_input(listen_for_servers, server_pids, client_pids):
+def handle_input(listen_for_servers, server_pids):
     global MY_PID
     global OTHER_SERVERS
 
     while True:
         try:
             inp = input()
-            if inp == 'e':
+            inp = inp.split()
+            if inp[0] == 'e':
                 do_exit(listen_for_servers)
             #connect to all servers
-            if inp == 'c':
+            elif inp[0] == 'c':
                 quorum = server_pids[str(MY_PID)]["quorum"]
                 for pid, info in server_pids.items():
                     if MY_PID != int(pid):
@@ -77,8 +88,29 @@ def handle_input(listen_for_servers, server_pids, client_pids):
             #Broadcast message to all servers
             #if inp == 'leader':
             #    threading.Thread(target = leader_request, args = ()).start()
+            elif inp[0] == "printblockchain":
+                threading.Thread(target=print_blockchain).start()
+            elif inp[0] == "printkv":
+                threading.Thread(target=print_kv).start()
+            elif inp[0] == "printqueue":
+                threading.Thread(target=print_queue).start()
+
         except EOFError:
             pass
+
+def print_blockchain():
+    global BLOCKCHAIN
+    for block_num in range(len(BLOCKCHAIN)):
+        print(BLOCKCHAIN[block_num])
+
+def print_kv():
+    global STUDENTS
+    for key, value in STUDENTS.items():
+        print(f"{key}: {value}")
+
+def print_queue():
+    global QUEUE
+    print(QUEUE)
 
 
 def server_connect(server_pid,port,quorum):
@@ -105,7 +137,7 @@ def create_block(op_info):
     hashable = op_info["op"] + op_info["key"] + op_info["value"] + nonce
     curr_hash = hashlib.sha256(hashable.encode()).hexdigest()
 
-    while (int(curr_hash[-1],16) >= 0 and int(curr_hash[-1],16) <=2):
+    while (curr_hash[-1] != "0" and curr_hash[-1] != "1" and curr_hash[-1] != "2"):
         nonce = generate_nonce()
         hashable = op_info["op"] + op_info["key"] + op_info["value"] + nonce
         curr_hash = hashlib.sha256(hashable.encode()).hexdigest()
@@ -114,7 +146,8 @@ def create_block(op_info):
 
     hash_ptr = None
     if len(BLOCKCHAIN) != 0:
-        hash_ptr = hashlib.sha256(BLOCKCHAIN[-1]["operation"] + "" + BLOCKCHAIN[-1]["header"]["nonce"] + "" + BLOCKCHAIN[-1]["header"]["hash"]).hexdigest()
+        hashable = BLOCKCHAIN[-1]["operation"]["key"] + BLOCKCHAIN[-1]["operation"]["value"] +  BLOCKCHAIN[-1]["header"]["nonce"] + BLOCKCHAIN[-1]["header"]["hash"]
+        hash_ptr = hashlib.sha256(hashable.encode()).hexdigest()
     else:
         hash_ptr = init_hash
 
@@ -130,28 +163,29 @@ def leader_accept():
     global LEADER
     global QUEUE
 
-    while(LEADER != MY_PID or len(QUEUE) == 0):
-        pass
+    while True:
+        while(LEADER != MY_PID or len(QUEUE) == 0):
+            pass
 
-    message = {}
-    message["type"] = "accept"
-    message["ballot"] = CURR_BAL_NUM
-    message["sender_pid"] = MY_PID
-    #make block by finding nonce
-    block = create_block(QUEUE[0])
-    message["value"] = block
-    encoded_message = pickle.dumps(message)
-    increment_seq_num()
-    time.sleep(4)
-    for s_pid, conn in OTHER_SERVERS.items():
-        print(f"Sending accept request from server {MY_PID} to server {s_pid}")
-        conn.sendall(encoded_message)
+        message = {}
+        message["type"] = "accept"
+        message["ballot"] = CURR_BAL_NUM
+        message["sender_pid"] = MY_PID
+        #make block by finding nonce
+        block = create_block(QUEUE[0])
+        message["value"] = block
+        encoded_message = pickle.dumps(message)
+        increment_seq_num()
+        time.sleep(5)
+        for s_pid, conn in OTHER_SERVERS.items():
+            print(f"Sending accept request from server {MY_PID} to server {s_pid}")
+            conn.sendall(encoded_message)
 
-    while(ENOUGH_ACCEPTED == False):
-        pass
+        while(ENOUGH_ACCEPTED == False):
+            pass
 
-    print("The people have accepted my value")
-    decide(block)
+        print("The people have accepted my value")
+        decide(block)
 
 def decide(block):
     global BLOCKCHAIN
@@ -161,8 +195,9 @@ def decide(block):
     BLOCKCHAIN.append(block)
     #Update key-value store
     key = block["operation"]["key"]
-    value = block["operation"]["value"]
-    STUDENTS[key] = value
+    if block["operation"]["op"] == "put":
+        value = block["operation"]["value"]
+        STUDENTS[key] = value
     client_id = QUEUE[0]["client_id"]
     #Pop operation from queue
     QUEUE.popleft()
@@ -172,11 +207,12 @@ def decide(block):
     if block["operation"]["op"] == "put":
         client_message["response"] = "ack"
     else:
+        value = STUDENTS[key]
         client_message["response"] = "Value for key {} is {}".format(key,value)
     print(f"Sending response to client {client_id}")
-    conn = CLIENTS[int(client_id)]
+    conn = CLIENTS[str(client_id)]
     encoded_message = pickle.dumps(client_message)
-    time.sleep(4)
+    time.sleep(5)
     increment_seq_num()
     conn.sendall(encoded_message)
 
@@ -207,7 +243,7 @@ def leader_request(client_id):
     message["sender_pid"] = MY_PID
     message["client_id"] = client_id
     encoded_message = pickle.dumps(message)
-    time.sleep(4)
+    time.sleep(5)
     for s_pid, conn in MY_QUORUM.items():
         print(f"Sending prepare from server {MY_PID} to server {s_pid}")
         conn.sendall(encoded_message)
@@ -233,11 +269,11 @@ def leader_broadcast():
     encoded_message = pickle.dumps(message)
     increment_seq_num()
     print(f"I am the leader!")
-    time.sleep(4)
+    time.sleep(5)
     for s_pid, conn in OTHER_SERVERS.items():
         conn.sendall(encoded_message)
-    client_stream = CLIENTS[1]
-    client_stream.sendall(encoded_message)
+    for c_pid, conn in CLIENTS.items():
+        conn.sendall(encoded_message)
     LEADER = MY_PID
     NUM_PROMISES = 0
 
@@ -348,7 +384,7 @@ def handle_prepare(message):
         reply["ballot"] = proposer_ballot
         reply["error"] = "prepare rejected"
         reply_encoded = pickle.dumps(reply)
-        time.sleep(4)
+        time.sleep(5)
         increment_seq_num()
         conn.sendall(reply_encoded)
     #All clear to send promise
@@ -358,7 +394,7 @@ def handle_prepare(message):
         reply["promise_values"] = {"bal": CURR_BAL_NUM, "accepted_num": ACCEPTED_NUM, "accepted_val": ACCEPTED_VAL, "depth": DEPTH, "client_id": client_id}
         reply_encoded = pickle.dumps(reply)
         print(f"Sending promise back to leader")
-        time.sleep(4)
+        time.sleep(5)
         increment_seq_num()
         conn.sendall(reply_encoded)
 
@@ -380,7 +416,7 @@ def handle_accept(message):
         reply["ballot"] = sender_ballot
         reply["error"] = "accept rejected"
         reply_encoded = pickle.dumps(reply)
-        time.sleep(4)
+        time.sleep(5)
         increment_seq_num()
         conn.sendall(reply_encoded)
     else:
@@ -391,7 +427,7 @@ def handle_accept(message):
         reply["accepted_vals"] = {"bal": CURR_BAL_NUM, "accepted_num": ACCEPTED_NUM, "accepted_val": ACCEPTED_VAL, "depth": DEPTH}
         reply_encoded = pickle.dumps(reply)
         print(f"Sending accepted back to leader")
-        time.sleep(4)
+        time.sleep(5)
         increment_seq_num()
         conn.sendall(reply_encoded)
 
@@ -406,6 +442,9 @@ def handle_client(stream):
             client_id = message["client_id"]
             threading.Thread(target = leader_request, args = (client_id,)).start()
         elif message["type"] == "put" or message["type"] == "get":
+            client_id = message["client_id"]
+            mtype = message["type"]
+            print(f"received {mtype} request from client {client_id}")
             op = {}
             LOCK.acquire()
             QUEUE.append({"op": message["type"], "key": message["id"], "value":message["value"], "client_id": message["client_id"]})
@@ -439,13 +478,13 @@ if __name__ == "__main__":
         server_pids = json.load(conf)
 
     #Load client json file with port nums
-    with open('client_config.json') as conf:
-        client_pids = json.load(conf)
+    # with open('client_config.json') as conf:
+    #     client_pids = json.load(conf)
 
     #Start to listen for other servers trying to listen_for_serversect
     #threading.Thread(target=server_listen, args=(pid, data, server_sock)).start()
     threading.Thread(target=handle_input, args=(
-        listen_for_servers, server_pids, client_pids)).start()
+        listen_for_servers, server_pids)).start()
 
     threading.Thread(target = leader_accept).start()
 
@@ -456,11 +495,14 @@ if __name__ == "__main__":
             if not data:
                 break
             message = data.decode('utf-8')
-            if message == "server":
+            message = message.split()
+            if message[0] == "server":
                 threading.Thread(target=handle_server, args=(stream,)).start()
-            elif message == "client":
+            elif message[0] == "client":
                 print("Connected to client")
-                CLIENTS[1] = stream
+                CLIENTS[message[1]] = stream
+                client_id = message[1]
+                print(f"Starting client listen for client {client_id}")
                 threading.Thread(target=handle_client, args=(stream,)).start()
         except KeyboardInterrupt:
             do_exit(output_file, listen_for_servers)
