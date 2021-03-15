@@ -29,7 +29,7 @@ LOCK = threading.Lock()
 MY_QUORUM = {}
 #Paxos globals
 LEADER = None
-CURR_BAL_NUM = (0,0,0)
+LEADER_ELECTION = False
 PREPARE_NACKED = False
 #For ballot num
 SEQ_NUM = 0
@@ -56,7 +56,7 @@ BLOCKCHAIN = []
 FAILED_LINKS = {}
 
 
-def do_exit(server_socket):
+def do_exit():
     global OTHER_SERVERS
     global CLIENTS
     sys.stdout.flush()
@@ -77,7 +77,7 @@ def handle_input(listen_for_servers, server_pids):
             inp = input()
             inp = inp.split()
             if inp[0] == 'e':
-                do_exit(listen_for_servers)
+                do_exit()
             #connect to all servers
             elif inp[0] == 'c':
                 quorum = server_pids[str(MY_PID)]["quorum"]
@@ -104,6 +104,8 @@ def handle_input(listen_for_servers, server_pids):
                 src = int(inp[1])
                 dest = int(inp[2])
                 threading.Thread(target=fix_link, args=(src, dest)).start()
+            elif inp[0] == "failprocess":
+                threading.Thread(target=fail_process).start()
 
         except EOFError:
             pass
@@ -135,6 +137,20 @@ def server_connect(server_pid,port,quorum):
         MY_QUORUM[server_pid] = server_to_server
     print(f"Connected to Server{server_pid}")
 
+def fail_process():
+    global OTHER_SERVERS
+    global MY_PID
+    global FAILED_LINKS
+
+    message = {}
+    message["type"] = "faillink"
+    message["sender"] = MY_PID
+    encoded_message = pickle.dumps(message)
+    print(f"Killing process...")
+    for pid, conn in OTHER_SERVERS.items():
+        conn.sendall(encoded_message)
+    do_exit()
+
 def fail_link(src, dest):
     global OTHER_SERVERS
     global MY_QUORUM
@@ -152,7 +168,7 @@ def fail_link(src, dest):
     FAILED_LINKS[dest] = conn
     del OTHER_SERVERS[dest]
 
-    print(f"Link failed with server {sender}")
+    print(f"Link failed with server {dest}")
 
     if MY_QUORUM.get(dest, -1) != -1:
         del MY_QUORUM[dest]
@@ -176,7 +192,7 @@ def fix_link(src, dest):
     time.sleep(5)
     conn.sendall(encoded_message)
 
-    print(f"Link fixed with server {sender}")
+    print(f"Link fixed with server {dest}")
 
 def generate_nonce():
     nonce = ''.join(random.choice(string.ascii_letters) for i in range(10))
@@ -215,37 +231,44 @@ def leader_accept():
     global MY_PID
     global LEADER
     global QUEUE
+    global NUM_ACCEPTED
+    global ENOUGH_ACCEPTED
 
     while True:
         while(LEADER != MY_PID or len(QUEUE) == 0):
             pass
-
+        increment_seq_num()
+        ballot = get_ballot_num()
         message = {}
         message["type"] = "accept"
-        message["ballot"] = CURR_BAL_NUM
+        message["ballot"] = ballot
         message["sender_pid"] = MY_PID
         #make block by finding nonce
         block = create_block(QUEUE[0])
         message["value"] = block
         encoded_message = pickle.dumps(message)
-        increment_seq_num()
         time.sleep(5)
         for s_pid, conn in OTHER_SERVERS.items():
-            print(f"Sending accept request from server {MY_PID} to server {s_pid}")
+            print(f"Sending accept request to server {s_pid}")
             conn.sendall(encoded_message)
 
         while(ENOUGH_ACCEPTED == False):
             pass
-
+        increment_seq_num()
         print("The people have accepted my value")
         decide(block)
+        NUM_ACCEPTED = 0
+        ENOUGH_ACCEPTED = False
 
 def decide(block):
     global BLOCKCHAIN
     global STUDENTS
     global QUEUE
+    global DEPTH
     #Add block to blockchain
+    increment_seq_num()
     BLOCKCHAIN.append(block)
+    DEPTH += 1
     #Update key-value store
     key = block["operation"]["key"]
     if block["operation"]["op"] == "put":
@@ -266,7 +289,6 @@ def decide(block):
     conn = CLIENTS[str(client_id)]
     encoded_message = pickle.dumps(client_message)
     time.sleep(5)
-    increment_seq_num()
     conn.sendall(encoded_message)
 
     server_message = {}
@@ -284,43 +306,46 @@ def leader_request(client_id):
     global MY_PID
     global OTHER_SERVERS
     global NUM_PROMISES
-    global CURR_BAL_NUM
     global PREPARE_NACKED
+    global LEADER_ELECTION
 
-    increment_seq_num()
-    ballot = get_ballot_num()
-    CURR_BAL_NUM = ballot
-    message = {}
-    message["type"] = "prepare"
-    message["ballot"] = ballot
-    message["sender_pid"] = MY_PID
-    message["client_id"] = client_id
-    encoded_message = pickle.dumps(message)
-    time.sleep(5)
-    for s_pid, conn in MY_QUORUM.items():
-        print(f"Sending prepare from server {MY_PID} to server {s_pid}")
-        conn.sendall(encoded_message)
-    while(ENOUGH_PROMISES != True):
-        #CHECK IF YOU GET A NACK, try again after some time 
-        if(PREPARE_NACKED == True):
-            #retry prepare: set promises to zero, set PREPARE_NACKED to False, sleep 5 seconds, call leader_request
-            print("I got PREPARE_NACKED on prepare request")
-            threading.Thread(target = retry_prepare, args=()).start()
-            break
-        pass
-    if(PREPARE_NACKED == False):
-        leader_broadcast()
+    if LEADER_ELECTION == False:
+        LEADER_ELECTION = True
+        increment_seq_num()
+        ballot = get_ballot_num()
+        message = {}
+        message["type"] = "prepare"
+        message["ballot"] = ballot
+        message["sender_pid"] = MY_PID
+        message["client_id"] = client_id
+        encoded_message = pickle.dumps(message)
+        time.sleep(5)
+        for s_pid, conn in MY_QUORUM.items():
+            print(f"Sending prepare with ballot {ballot} to server {s_pid}")
+            conn.sendall(encoded_message)
+        while(ENOUGH_PROMISES != True):
+            #CHECK IF YOU GET A NACK, try again after some time 
+            if(PREPARE_NACKED == True):
+                #retry prepare: set promises to zero, set PREPARE_NACKED to False, sleep 5 seconds, call leader_request
+                print("I got PREPARE_NACKED on prepare request")
+                LEADER_ELECTION = False
+                threading.Thread(target = retry_prepare, args=(client_id,)).start()
+                break
+            pass
+        increment_seq_num()
+        if(PREPARE_NACKED == False):
+            leader_broadcast()
 
 def leader_broadcast():
     global MY_PID 
     global CLIENTS
     global LEADER
+    global LEADER_ELECTION
 
     message = {}
     message["type"] = "leader_broadcast"
     message["leader"] = MY_PID
     encoded_message = pickle.dumps(message)
-    increment_seq_num()
     print(f"I am the leader!")
     time.sleep(5)
     for s_pid, conn in OTHER_SERVERS.items():
@@ -329,15 +354,19 @@ def leader_broadcast():
         conn.sendall(encoded_message)
     LEADER = MY_PID
     NUM_PROMISES = 0
+    ENOUGH_PROMISES = False
+    LEADER_ELECTION = False
 
-def retry_prepare():
+
+def retry_prepare(client_id):
     global NUM_PROMISES
     global PREPARE_NACKED
 
     NUM_PROMISES = 0
     time.sleep(5)
     PREPARE_NACKED = False
-    leader_request()
+    increment_seq_num()
+    leader_request(client_id)
 
 def increment_seq_num():
     global SEQ_NUM
@@ -361,14 +390,14 @@ def handle_server(stream):
     global ENOUGH_ACCEPTED
     global BLOCKCHAIN
     global STUDENTS
+    global DEPTH
 
     while(True):
-        data = stream.recv(1024)
+        data = stream.recv(4096)
         if not data:
             break
         message = pickle.loads(data)
         #Handle prepare message
-        increment_seq_num()
         if message["type"] == "prepare":
             sender = message["sender_pid"]
             print(f"Received prepare message from server {sender}")
@@ -378,6 +407,16 @@ def handle_server(stream):
             LOCK.acquire()
             NUM_PROMISES += 1
             PROMISED_VALS.append(message["promise_values"])
+            if message["promise_values"]["depth"] < DEPTH:
+                serv = message["sender"]
+                print("Updating server {sender}")
+                reply = {}
+                reply["type"] = "update"
+                reply["blockchain"] = BLOCKCHAIN
+                reply["students"] = STUDENTS
+                conn = OTHER_SERVERS[message["sender"]]
+                encoded_reply = pickle.dumps(reply)
+                conn.sendall(encoded_reply)
             if NUM_PROMISES >=2:
                 #Check to see if accepted vals sent are null
                 highest_accepted_num = 0
@@ -395,6 +434,11 @@ def handle_server(stream):
             LEADER = message["leader"]
             print(f"Assigned leader to {LEADER}")
         elif message["type"] == "prepare_nack":
+            if message["behind"] == True:
+                print("I was behind, updating now.")
+                BLOCKCHAIN = message["blockchain"]
+                STUDENTS = message["students"]
+                DEPTH = len(BLOCKCHAIN)
             PREPARE_NACKED = True
         elif message["type"] == "accept":
             sender = message["sender_pid"]
@@ -408,27 +452,36 @@ def handle_server(stream):
             LOCK.release()
         elif message["type"] == "decide":
             print(f"Received decision from leader")
+            DEPTH += 1
             block = message["value"]
             BLOCKCHAIN.append(block)
             key = block["operation"]["key"]
             value = block["operation"]["value"] 
             STUDENTS[key] = value
+            increment_seq_num()
         elif message["type"] == "faillink":
             sender = message["sender"]
             print(f"Received faillink from {sender}")
-            threading.Thread(target=handle_fail_link, args=(sender)).start()
+            threading.Thread(target=handle_fail_link, args=(sender,)).start()
         elif message["type"] == "fixlink":
             sender = message["sender"]
             print(f"Received fixlink from {sender}")
-            threading.Thread(target=handle_fix_link, args=(sender)).start()
-
+            threading.Thread(target=handle_fix_link, args=(sender,)).start()
+        elif message["type"] == "update":
+            print("updating values and blockchain")
+            BLOCKCHAIN = message["blockchain"]
+            STUDENTS = message["students"]
+            DEPTH =len(BLOCKCHAIN)
 
 def handle_prepare(message):
     global OTHER_SERVERS
     global DEPTH
     global ACCEPTED_NUM
     global ACCEPTED_PID
-    global CURR_BAL_NUM
+    global BLOCKCHAIN
+    global STUDENTS
+    global MY_PID
+    global SEQ_NUM
 
     sender_pid = int(message["sender_pid"])
     conn = OTHER_SERVERS[sender_pid]
@@ -438,58 +491,71 @@ def handle_prepare(message):
     client_id = message["client_id"]
     print(f"proposer ballot: {proposer_ballot}")
     #compare depth, seq_num, andpid of proposer to currently held values
-    if(proposer_ballot[2] < DEPTH or proposer_ballot[0] < CURR_BAL_NUM[0]  or (proposer_ballot[0] == CURR_BAL_NUM[0] and proposer_ballot[1] < CURR_BAL_NUM[1])):
-        print(f"Proposal no good")
+    if(proposer_ballot[2] < DEPTH or proposer_ballot[0] < SEQ_NUM  or (proposer_ballot[0] == SEQ_NUM and proposer_ballot[1] < MY_PID)):
+        my_bal = get_ballot_num()
+        print(f"Proposal no good, smaller than {my_bal}")
         reply["type"] = "prepare_nack"
         reply["ballot"] = proposer_ballot
         reply["error"] = "prepare rejected"
+        if proposer_ballot[2] < DEPTH:
+            reply["behind"] = True
+            reply["blockchain"] = BLOCKCHAIN
+            reply["students"] = STUDENTS
+        else:
+            reply["behind"] = False
         reply_encoded = pickle.dumps(reply)
         time.sleep(5)
-        increment_seq_num()
         conn.sendall(reply_encoded)
     #All clear to send promise
     else:
-        CURR_BAL_NUM = proposer_ballot         
+        SEQ_NUM = proposer_ballot[0]
+        my_bal = get_ballot_num()         
         reply["type"] = "promise"
-        reply["promise_values"] = {"bal": CURR_BAL_NUM, "accepted_num": ACCEPTED_NUM, "accepted_val": ACCEPTED_VAL, "depth": DEPTH, "client_id": client_id}
+        reply["sender"] = MY_PID
+        reply["promise_values"] = {"bal": my_bal, "accepted_num": ACCEPTED_NUM, "accepted_val": ACCEPTED_VAL, "depth": DEPTH, "client_id": client_id}
         reply_encoded = pickle.dumps(reply)
         print(f"Sending promise back to leader")
         time.sleep(5)
         increment_seq_num()
         conn.sendall(reply_encoded)
+    increment_seq_num()
 
 def handle_accept(message):
     global OTHER_SERVERS
     global DEPTH
     global ACCEPTED_NUM
     global ACCEPTED_PID
-    global CURR_BAL_NUM
+    global SEQ_NUM
+    global MY_PID
 
     sender_pid = int(message["sender_pid"])
     conn = OTHER_SERVERS[sender_pid]
     reply = {}
 
     sender_ballot = message["ballot"]
-    if(sender_ballot[2] < DEPTH or sender_ballot[0] < CURR_BAL_NUM[0]  or (sender_ballot[0] == CURR_BAL_NUM[0] and sender_ballot[1] < CURR_BAL_NUM[1])):
+    my_bal = get_ballot_num()
+    print(f"Sender ballot: {sender_ballot} My current ballot: {my_bal}")
+    if(sender_ballot[2] < DEPTH or sender_ballot[0] < SEQ_NUM  or (sender_ballot[0] == SEQ_NUM and sender_ballot[1] < MY_PID)):
         print(f"Accept no good")
         reply["type"] = "accept_nack"
         reply["ballot"] = sender_ballot
         reply["error"] = "accept rejected"
         reply_encoded = pickle.dumps(reply)
         time.sleep(5)
-        increment_seq_num()
         conn.sendall(reply_encoded)
     else:
-        CURR_BAL_NUM = sender_ballot 
-        ACCEPTED_NUM = sender_ballot  
+        SEQ_NUM = sender_ballot[0] 
+        my_bal = get_ballot_num()
+        ACCEPTED_NUM = my_bal  
         ACCEPTED_VAL = message["value"]      
         reply["type"] = "accepted"
-        reply["accepted_vals"] = {"bal": CURR_BAL_NUM, "accepted_num": ACCEPTED_NUM, "accepted_val": ACCEPTED_VAL, "depth": DEPTH}
+        reply["accepted_vals"] = {"bal": my_bal, "accepted_num": ACCEPTED_NUM, "accepted_val": ACCEPTED_VAL, "depth": DEPTH}
         reply_encoded = pickle.dumps(reply)
         print(f"Sending accepted back to leader")
         time.sleep(5)
         increment_seq_num()
         conn.sendall(reply_encoded)
+    increment_seq_num()
 
 def handle_fail_link(sender):
     global FAILED_LINKS
@@ -532,7 +598,7 @@ def handle_client(stream):
         elif message["type"] == "put" or message["type"] == "get":
             client_id = message["client_id"]
             mtype = message["type"]
-            print(f"received {mtype} request from client {client_id}")
+            print(f"Received {mtype} request from client {client_id}")
             op = {}
             LOCK.acquire()
             QUEUE.append({"op": message["type"], "key": message["id"], "value":message["value"], "client_id": message["client_id"]})

@@ -12,7 +12,7 @@ import collections
 CURRENT_LEADER = None
 WAITING = False
 OP_DEQ = collections.deque()
-TIMEOUT = 20
+TIMEOUT = 25.0
 
 # def do_exit():
 #     server_sock.close()
@@ -97,8 +97,9 @@ def send_put(inp):
     #Wait to hear back for server
     send_time = datetime.now()
     while(WAITING == True):
-        if(datetime.now() - send_time > TIMEOUT):
+        if (datetime.now() - send_time).total_seconds() > TIMEOUT:
             new_leader()
+            WAITING = False
         pass
     OP_DEQ.popleft()
 
@@ -126,37 +127,41 @@ def send_get(inp):
     #Wait to hear back for server
     send_time = datetime.now()
     while(WAITING == True):
-        if(datetime.now() - send_time > TIMEOUT):
+        if (datetime.now() - send_time).total_seconds() > TIMEOUT:
             new_leader()
-            OP_DEQ.popleft()
+            WAITING = False
         pass
     OP_DEQ.popleft()
 
 def new_leader():
     global CURRENT_LEADER
+    print("Timeout!")
     new_leader = (CURRENT_LEADER + 1) % 5
     init_leader(new_leader)
 
 def server_listen(sock):
     global CURRENT_LEADER
     global WAITING
-    while True:
-        data = (sock.recv(1024))
-        message = pickle.loads(data)
-        if message["type"] == "leader_broadcast":
-            CURRENT_LEADER = message["leader"]
-            print(f"Server {CURRENT_LEADER} elected leader")
-        # if message["type"] == "put_ack":
-        #     print(f"Got acknowledgment from server {CURRENT_LEADER}") 
-        #     WAITING = False
-        # if message["type"] == "get_ack":
-        #     value = message["value"]
-        #     print(f"Got get acknowledgment from server {CURRENT_LEADER} for value {value}")
-        #     WAITING = False
-        if message["type"] == "server_response":
-            WAITING = False
-            print(message["response"])
-
+    try:
+        while True:
+            data = (sock.recv(1024))
+            message = pickle.loads(data)
+            if message["type"] == "leader_broadcast":
+                CURRENT_LEADER = message["leader"]
+                print(f"Server {CURRENT_LEADER} elected leader")
+            # if message["type"] == "put_ack":
+            #     print(f"Got acknowledgment from server {CURRENT_LEADER}") 
+            #     WAITING = False
+            # if message["type"] == "get_ack":
+            #     value = message["value"]
+            #     print(f"Got get acknowledgment from server {CURRENT_LEADER} for value {value}")
+            #     WAITING = False
+            if message["type"] == "server_response":
+                WAITING = False
+                print(message["response"])
+    except EOFError:
+        pass
+            
 if __name__ == "__main__":
     MY_PID = int(sys.argv[1])
 
