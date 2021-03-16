@@ -162,7 +162,6 @@ def fail_link(src, dest):
     message["type"] = "faillink"
     message["sender"] = MY_PID
     encoded_message = pickle.dumps(message)
-    time.sleep(5)
     conn.sendall(encoded_message)
 
     FAILED_LINKS[dest] = conn
@@ -254,7 +253,6 @@ def leader_accept():
 
         while(ENOUGH_ACCEPTED == False):
             pass
-        increment_seq_num()
         print("The people have accepted my value")
         decide(block)
         NUM_ACCEPTED = 0
@@ -332,7 +330,6 @@ def leader_request(client_id):
                 threading.Thread(target = retry_prepare, args=(client_id,)).start()
                 break
             pass
-        increment_seq_num()
         if(PREPARE_NACKED == False):
             leader_broadcast()
 
@@ -404,6 +401,7 @@ def handle_server(stream):
             threading.Thread(target=handle_prepare, args = (message,)).start()
         #Handle promise message
         elif message["type"] == "promise":
+            increment_seq_num()
             LOCK.acquire()
             NUM_PROMISES += 1
             PROMISED_VALS.append(message["promise_values"])
@@ -445,6 +443,7 @@ def handle_server(stream):
             print(f"Received accept from server {sender}")
             threading.Thread(target=handle_accept, args = (message,)).start()
         elif message["type"] == "accepted":
+            increment_seq_num()
             LOCK.acquire()
             NUM_ACCEPTED += 1
             if NUM_ACCEPTED >= 2:
@@ -455,13 +454,13 @@ def handle_server(stream):
             DEPTH += 1
             block = message["value"]
             BLOCKCHAIN.append(block)
-            key = block["operation"]["key"]
-            value = block["operation"]["value"] 
-            STUDENTS[key] = value
+            if block["operation"]["op"] == "put":
+                key = block["operation"]["key"]
+                value = block["operation"]["value"] 
+                STUDENTS[key] = value
             increment_seq_num()
         elif message["type"] == "faillink":
             sender = message["sender"]
-            print(f"Received faillink from {sender}")
             threading.Thread(target=handle_fail_link, args=(sender,)).start()
         elif message["type"] == "fixlink":
             sender = message["sender"]
