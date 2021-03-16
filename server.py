@@ -56,10 +56,11 @@ BLOCKCHAIN = []
 FAILED_LINKS = {}
 
 
-def do_exit():
+def do_exit(output_file):
     global OTHER_SERVERS
     global CLIENTS
     sys.stdout.flush()
+    #output_file.flush()
     for sid, sock in OTHER_SERVERS.items():
         sock.close()
 
@@ -77,7 +78,8 @@ def handle_input(listen_for_servers, server_pids):
             inp = input()
             inp = inp.split()
             if inp[0] == 'e':
-                do_exit()
+                output_file = 'disk' + str(MY_PID) + '.txt'
+                do_exit(output_file)
             #connect to all servers
             elif inp[0] == 'c':
                 quorum = server_pids[str(MY_PID)]["quorum"]
@@ -141,6 +143,7 @@ def fail_process():
     global OTHER_SERVERS
     global MY_PID
     global FAILED_LINKS
+    global CLIENTS
 
     message = {}
     message["type"] = "faillink"
@@ -149,7 +152,14 @@ def fail_process():
     print(f"Killing process...")
     for pid, conn in OTHER_SERVERS.items():
         conn.sendall(encoded_message)
-    do_exit()
+    sys.stdout.flush()
+    #output_file.flush()    
+    for sid, sock in OTHER_SERVERS.items():
+        sock.close()
+
+    for cid, sock in CLIENTS.items():
+        sock.close()
+    os._exit(0)
 
 def fail_link(src, dest):
     global OTHER_SERVERS
@@ -266,6 +276,7 @@ def decide(block):
     #Add block to blockchain
     increment_seq_num()
     BLOCKCHAIN.append(block)
+    #append_block(block)
     DEPTH += 1
     #Update key-value store
     key = block["operation"]["key"]
@@ -281,8 +292,11 @@ def decide(block):
     if block["operation"]["op"] == "put":
         client_message["response"] = "ack"
     else:
-        value = STUDENTS[key]
-        client_message["response"] = "Value for key {} is {}".format(key,value)
+        value = STUDENTS.get(key, -1)
+        if value == -1:
+            client_message["response"] = "NO_KEY"
+        else:
+            client_message["response"] = "Value for key {} is {}".format(key,value)
     print(f"Sending response to client {client_id}")
     conn = CLIENTS[str(client_id)]
     encoded_message = pickle.dumps(client_message)
@@ -546,7 +560,8 @@ def handle_accept(message):
         SEQ_NUM = sender_ballot[0] 
         my_bal = get_ballot_num()
         ACCEPTED_NUM = my_bal  
-        ACCEPTED_VAL = message["value"]      
+        ACCEPTED_VAL = message["value"] 
+        #append_block_tent(message["value"])     
         reply["type"] = "accepted"
         reply["accepted_vals"] = {"bal": my_bal, "accepted_num": ACCEPTED_NUM, "accepted_val": ACCEPTED_VAL, "depth": DEPTH}
         reply_encoded = pickle.dumps(reply)
@@ -658,5 +673,6 @@ if __name__ == "__main__":
                 print(f"Starting client listen for client {client_id}")
                 threading.Thread(target=handle_client, args=(stream,)).start()
         except KeyboardInterrupt:
-            do_exit(output_file, listen_for_servers)
+            output_file = 'disk' + str(MY_PID) + '.txt'
+            do_exit(output_file)
 

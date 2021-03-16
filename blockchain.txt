@@ -1,2 +1,0 @@
-{"header": ["cDerLTddRjJ", 12324323243], "operation": ["put", "alice_netid", {"phone_number": "111-222-3333"}]}
-{"header": ["bRdDoKBqaZ", 8765432], "operation": ["get", "alice_netid", {}]}
